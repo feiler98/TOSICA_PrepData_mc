@@ -1,4 +1,4 @@
-scvi
+scvi-tools
 scanpy
 pandas
 numpy
