@@ -158,7 +158,7 @@ sc.tl.umap(adata_concat, min_dist=0.3)
 
 sc.pp.highly_variable_genes(adata_concat, inplace=True, n_top_genes=2000, flavor='seurat_v3_paper', subset=True)
 list_integration_genes_2K = list(adata_concat.var.index)
-with open(str(path_out/"integration_genes_2K")) as f:
+with open(str(path_out/"integration_genes_2K.txt"), "w") as f:
     f.write("\n".join(list_integration_genes_2K))
 adata_concat.write(path_out / "metacell_benchmark_cell_curated_integration_gene_2K.h5")
 
