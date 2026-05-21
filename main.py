@@ -10,9 +10,8 @@ from pathlib import Path
 import scanpy as sc
 import pandas as pd
 import numpy as np
-import utilTOSICA.preprocessing as uTpre
-import utilTOSICA.utils.vis_utils as uTv
 import scvi
+import json
 
 # run code
 # ----------------------------------------------------------------------------------------------------------------------
@@ -23,11 +22,100 @@ path_mc = path_cwd / "benchmark_metacells"
 path_out = path_cwd / "outTOSICA_data_prep"
 path_out.mkdir(exist_ok=True, parents=True)
 
+def get_json_dict(json_file_path: (str | Path)) -> dict:
+    """
+    Parameters
+    ----------
+    json_file_path : str | Path
+        Absolute-path of JSON file.
+
+    Returns
+    -------
+    dict
+        JSON file as dictionary.
+    """
+
+    if not Path(json_file_path).exists():
+        raise FileExistsError("JSON File could not be found!")
+    with open(json_file_path, 'r') as in_file:
+        return json.load(in_file)
+
+def var_idx_ensg_to_symbol(adata: sc.AnnData) -> sc.AnnData:
+    """
+    Parameters
+    ----------
+    adata: sc.AnnData
+
+    Returns
+    -------
+    sc.AnnData
+    """
+
+    path_ensg_to_json = Path(__file__).parent / "ensg_to_symbol.json"
+    dict_ensg_to_symbol = get_json_dict(path_ensg_to_json)
+    list_accept = [x for x in adata.var.index if x in dict_ensg_to_symbol.keys()]
+    adata = adata[:, list_accept]
+    adata.var["symbol"] = [dict_ensg_to_symbol[x] for x in adata.var.index]
+    adata.var.set_index("symbol", inplace=True)
+    return adata
+
+def metacell_out_to_adata(path_metacells_parent_dir: (str | Path),
+                          recursive: bool = True,
+                          target_file_tag: str = "*soft_assignment",
+                          min_metacell_count: (int | None) = None) -> sc.AnnData | None:
+    """
+    Specialized method for fetching and concat metacells from a previously established SEACells pipeline.
+    Fetches soft-assigned metacells which were saved as .csv RCM files.
+
+    Parameters
+    ----------
+    path_metacells_parent_dir: str | Path
+    recursive: bool
+        Enables recursive folder search.
+    target_file_tag: str
+    min_metacell_count: int | None
+        If None or x < 1, sets variable to 1.
+
+    Returns
+    -------
+    sc.AnnData
+    """
+
+    path = Path(path_metacells_parent_dir).resolve()
+    if not path.exists() and not path.is_dir():
+        raise ValueError("Given Path is invalid! A directory was expected.")
+
+    if recursive:
+        list_mc_paths = list(path.rglob(f"{target_file_tag}.csv"))
+    else:
+        list_mc_paths = list(path.glob(f"{target_file_tag}.csv"))
+
+    if min_metacell_count is None or min_metacell_count < 1:
+        min_metacell_count = 1
+
+    dict_adata_mc = {}
+    for p in list_mc_paths:
+        df_import = pd.read_csv(p, index_col="Gene").T
+        if len(df_import) < min_metacell_count:
+            print(f"""skip >> {p.name}
+    --> set min_metacell_count ({min_metacell_count}) > file cell count ({len(df_import)}) """)
+        else:
+            print(f"import >> {p.name}")
+            adata = sc.AnnData(pd.read_csv(p, index_col="Gene").T)
+            adata.obs["cell_tags"] = [t.split("__")[-1] for t in adata.obs.index]
+            adata.obs["batch_key"] = [p.stem.split("__")[1]]*len(adata)
+            dict_adata_mc[p.stem] = adata
+    if len(dict_adata_mc) > 0:
+        adata_concat = sc.concat(dict_adata_mc, join="outer")
+        adata_concat.obs_names_make_unique()
+        return adata_concat
+    else:
+        return None
 
 # data prep
-adata_concat = uTpre.metacell_out_to_adata(path_mc, recursive=True, min_metacell_count=10)
+adata_concat = metacell_out_to_adata(path_mc, recursive=True, min_metacell_count=10)
 adata_concat.X = np.nan_to_num(adata_concat.X, nan=0)
-adata_concat = uTpre.var_idx_ensg_to_symbol(adata_concat)
+adata_concat = var_idx_ensg_to_symbol(adata_concat)
 adata_concat.obs_names_make_unique()
 
 # relabel cell classes by curated df
@@ -73,12 +161,10 @@ with open(str(path_out/"integration_genes_2K")) as f:
     f.write("\n".join(list_integration_genes_2K))
 adata_concat.write(path_out / "metacell_benchmark_cell_curated_integration_gene_2K.h5")
 
-uTv.plotly_adata_umap(adata_concat, header="TOSICA train & test data - scVI integrated", save_dir=path_out)
 
 # reload adata and visualize the data before integration while using only the 2K genes from the integration
 adata_concat = sc.read(path_out / "metacell_benchmark_cell_curated_no_integration.h5")
 adata_concat = adata_concat[:, list_integration_genes_2K]
-adata_concat.write(path_out / "metacell_benchmark_cell_curated_no_integration_gene_2K.h5")
 sc.pp.neighbors(adata_concat, use_rep="X")
 sc.tl.umap(adata_concat, min_dist=0.3)
-uTv.plotly_adata_umap(adata_concat, header="TOSICA train & test data - not integrated", save_dir=path_out)
+adata_concat.write(path_out / "metacell_benchmark_cell_curated_no_integration_gene_2K.h5")

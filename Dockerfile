@@ -1,4 +1,4 @@
-FROM feiler98/utiltosica
+FROM feiler98/pyomics_fedora
 
 # setup working environment
 RUN mkdir -p /scratch/tmp/feiler/TOSICA_PrepData_mc
