@@ -122,7 +122,7 @@ adata_concat.obs_names_make_unique()
 # relabel cell classes by curated df
 df_rename = pd.read_excel("metacell_benchmark_cell_class_curation.xlsx")
 dict_rename = {k: v for k,v in zip(list(df_rename["cell_tag"]), list(df_rename["curated_cell_tag"]))}
-adata_concat.obs["curated_cell_tags"] = adata_concat.obs["cell_tags"].map(lambda x : dict_rename[x])
+adata_concat.obs["curated_cell_tag"] = adata_concat.obs["cell_tags"].map(lambda x : dict_rename[x])
 filter_remove_list = [idx for idx, tag in zip(adata_concat.obs.index, list(adata_concat.obs["curated_cell_tags"])) if tag != "remove"]
 # remove all cells marked for removal in curated_cell_tags
 adata_concat = adata_concat[filter_remove_list, :]
@@ -147,7 +147,7 @@ model.train()
 scanvi_model = scvi.model.SCANVI.from_scvi_model(
     model,
     adata=adata_concat,
-    labels_key='curated_cell_tags',
+    labels_key='curated_cell_tag',
     unlabeled_category="Unknown",
 )
 scanvi_model.train(max_epochs=40, n_samples_per_label=100) # 40 epochs sufficient for fine tuning
