@@ -119,53 +119,57 @@ adata_concat.X = np.nan_to_num(adata_concat.X, nan=0)
 adata_concat = var_idx_ensg_to_symbol(adata_concat)
 adata_concat.obs_names_make_unique()
 
-# relabel cell classes by curated df
-df_rename = pd.read_excel("metacell_benchmark_cell_class_curation.xlsx")
-dict_rename = {k: v for k,v in zip(list(df_rename["cell_tag"]), list(df_rename["curated_cell_tag"]))}
-adata_concat.obs["curated_cell_tag"] = adata_concat.obs["cell_tags"].map(lambda x : dict_rename[x])
-filter_remove_list = [idx for idx, tag in zip(adata_concat.obs.index, list(adata_concat.obs["curated_cell_tag"])) if tag != "remove"]
-# remove all cells marked for removal in curated_cell_tags
-adata_concat = adata_concat[filter_remove_list, :]
+for path_csv in path_cwd.glob("cellclass__lvl*.csv"):
+    tag_data = path_csv.stem
+    adata_mod = adata_concat.copy()
 
-# for integration, further cleaning is required
-min_instances_per_class = 20
-all_cell_tags = list(adata_concat.obs["curated_cell_tag"])
-sorted_cell_tags = sorted(list(adata_concat.obs["curated_cell_tag"].unique()), key=str.casefold)
-dict_cell_classes = {cell_class: all_cell_tags.count(cell_class) for cell_class in sorted_cell_tags}
-list_cells_keep = [cell for cell, class_tag in
-                   zip(list(adata_concat.obs.index), list(adata_concat.obs["curated_cell_tag"]))
-                   if dict_cell_classes[class_tag] >= min_instances_per_class]
-adata_concat = adata_concat[list_cells_keep, :]
-adata_concat.write(path_out / "metacell_benchmark_cell_curated_no_integration.h5")
+    # relabel cell classes by curated df
+    df_rename = pd.read_csv(path_csv)
+    dict_rename = {k: v for k,v in zip(list(df_rename["cell_tag"]), list(df_rename["curated_cell_tag"]))}
+    adata_mod.obs["curated_cell_tag"] = adata_mod.obs["cell_tags"].map(lambda x : dict_rename[x])
+    filter_remove_list = [idx for idx, tag in zip(adata_mod.obs.index, list(adata_mod.obs["curated_cell_tag"])) if tag != "remove"]
+    # remove all cells marked for removal in curated_cell_tags
+    adata_mod = adata_mod[filter_remove_list, :]
 
-# integration scVI & scANVI
-# store original counts
-adata_concat.layers["counts"] = adata_concat.X
-scvi.model.SCVI.setup_anndata(adata_concat, layer="counts", batch_key="batch_key")
-model = scvi.model.SCVI(adata_concat, n_layers=2, n_latent=30, gene_likelihood="nb")
-model.train()
-scanvi_model = scvi.model.SCANVI.from_scvi_model(
-    model,
-    adata=adata_concat,
-    labels_key='curated_cell_tag',
-    unlabeled_category="Unknown",
-)
-scanvi_model.train(max_epochs=40, n_samples_per_label=100) # 40 epochs sufficient for fine tuning
-SCANVI_LATENT_KEY = "X_scANVI"
-adata_concat.obsm[SCANVI_LATENT_KEY] = scanvi_model.get_latent_representation(adata_concat)
-sc.pp.neighbors(adata_concat, use_rep=SCANVI_LATENT_KEY)
-sc.tl.umap(adata_concat, min_dist=0.3)
+    # for integration, further cleaning is required
+    min_instances_per_class = 20
+    all_cell_tags = list(adata_mod.obs["curated_cell_tag"])
+    sorted_cell_tags = sorted(list(adata_mod.obs["curated_cell_tag"].unique()), key=str.casefold)
+    dict_cell_classes = {cell_class: all_cell_tags.count(cell_class) for cell_class in sorted_cell_tags}
+    list_cells_keep = [cell for cell, class_tag in
+                       zip(list(adata_mod.obs.index), list(adata_mod.obs["curated_cell_tag"]))
+                       if dict_cell_classes[class_tag] >= min_instances_per_class]
+    adata_mod = adata_mod[list_cells_keep, :]
+    adata_mod.write(path_out / f"metacell_benchmark_cell_curated_no_integration__{tag_data}.h5")
 
-sc.pp.highly_variable_genes(adata_concat, inplace=True, n_top_genes=2000, flavor='seurat_v3_paper', subset=True)
-list_integration_genes_2K = list(adata_concat.var.index)
-with open(str(path_out/"integration_genes_2K.txt"), "w") as f:
-    f.write("\n".join(list_integration_genes_2K))
-adata_concat.write(path_out / "metacell_benchmark_cell_curated_integration_gene_2K.h5")
+    # integration scVI & scANVI
+    # store original counts
+    adata_mod.layers["counts"] = adata_mod.X
+    scvi.model.SCVI.setup_anndata(adata_mod, layer="counts", batch_key="batch_key")
+    model = scvi.model.SCVI(adata_mod, n_layers=2, n_latent=30, gene_likelihood="nb")
+    model.train()
+    scanvi_model = scvi.model.SCANVI.from_scvi_model(
+        model,
+        adata=adata_mod,
+        labels_key='curated_cell_tag',
+        unlabeled_category="Unknown",
+    )
+    scanvi_model.train(max_epochs=40, n_samples_per_label=100) # 40 epochs sufficient for fine tuning
+    SCANVI_LATENT_KEY = "X_scANVI"
+    adata_mod.obsm[SCANVI_LATENT_KEY] = scanvi_model.get_latent_representation(adata_mod)
+    sc.pp.neighbors(adata_mod, use_rep=SCANVI_LATENT_KEY)
+    sc.tl.umap(adata_mod, min_dist=0.3)
+
+    sc.pp.highly_variable_genes(adata_mod, inplace=True, n_top_genes=2000, flavor='seurat_v3_paper', subset=True)
+    list_integration_genes_2K = list(adata_mod.var.index)
+    with open(str(path_out/f"integration_genes_2K__{tag_data}.txt"), "w") as f:
+        f.write("\n".join(list_integration_genes_2K))
+    adata_mod.write(path_out / f"metacell_benchmark_cell_curated_integration_gene_2K__{tag_data}.h5")
 
 
-# reload adata and visualize the data before integration while using only the 2K genes from the integration
-adata_concat = sc.read(path_out / "metacell_benchmark_cell_curated_no_integration.h5")
-adata_concat = adata_concat[:, list_integration_genes_2K]
-sc.pp.neighbors(adata_concat, use_rep="X")
-sc.tl.umap(adata_concat, min_dist=0.3)
-adata_concat.write(path_out / "metacell_benchmark_cell_curated_no_integration_gene_2K.h5")
+    # reload adata and visualize the data before integration while using only the 2K genes from the integration
+    adata_mod = sc.read(path_out / f"metacell_benchmark_cell_curated_no_integration__{tag_data}.h5")
+    adata_mod = adata_mod[:, list_integration_genes_2K]
+    sc.pp.neighbors(adata_mod, use_rep="X")
+    sc.tl.umap(adata_mod, min_dist=0.3)
+    adata_mod.write(path_out / f"metacell_benchmark_cell_curated_no_integration_gene_2K__{tag_data}.h5")
